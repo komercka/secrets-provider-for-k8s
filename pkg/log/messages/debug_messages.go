@@ -9,3 +9,6 @@ const CSPFK007D string = "CSPFK007D Kubernetes Secret '%s' has an invalid value 
 const CSPFK008D string = "CSPFK008D Kubernetes Secret '%s' has no '%s' data entry defined"
 const CSPFK009D string = "CSPFK009D Processing '%s' data entry value of Kubernetes Secret '%s'"
 const CSPFK010D string = "CSPFK010D Listed %d secrets from Conjur"
+const CSPFK011D string = "CSPFK011D Kubernetes Secret '%s' has no '%s' annotation defined"
+const CSPFK012D string = "CSPFK012D Kubernetes Secret '%s' has empty '%s' annotation defined"
+const CSPFK013D string = "CSPFK013D Kubernetes Secret '%s' has an invalid value for '%s' annotation. Reason: %s"
