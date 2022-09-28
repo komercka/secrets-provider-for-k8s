@@ -208,7 +208,7 @@ func TestRunSecretsProvider(t *testing.T) {
 		},
 		{
 			description:    "application mode, happy path",
-			mode:           "application",
+			mode:           "standalone",
 			interval:       time.Duration(100) * time.Millisecond,
 			testTime:       time.Duration(250) * time.Millisecond,
 			expectProvided: true,
@@ -302,7 +302,7 @@ func TestRunSecretsProvider(t *testing.T) {
 			// Run the secrets provider
 			testError := make(chan error)
 			go func() {
-				err := RunSecretsProvider(refreshConfig, tc.provider.provide, fileUpdater)
+				err := RunSecretsProvider(refreshConfig, tc.provider.provide, fileUpdater, "test-ns")
 				testError <- err
 			}()
 			select {

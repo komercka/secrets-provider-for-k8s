@@ -140,7 +140,7 @@ conjur.org/secret-file-format.this-group="yaml"`,
 	},
 	{
 		description: "malformed annotation file line without '='",
-		contents: `conjur.org/container-mode="application"
+		contents: `conjur.org/container-mode="standalone"
 conjur.org/retry-count-limit: 5`,
 		assert: assertProperError("Annotation file line 2 is malformed"),
 	},

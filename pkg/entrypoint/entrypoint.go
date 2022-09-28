@@ -131,6 +131,7 @@ func startSecretsProviderWithDeps(
 		},
 		provideSecrets,
 		statusUpdaterFactory(),
+		secretsConfig.PodNamespace,
 	); err != nil {
 		logError(err.Error())
 	}
@@ -282,7 +283,7 @@ func getContainerMode() string {
 	containerMode := "init"
 	if mode, exists := annotationsMap[secretsConfigProvider.ContainerModeKey]; exists {
 		containerMode = mode
-	} else if mode = os.Getenv("CONTAINER_MODE"); mode == "sidecar" || mode == "application" {
+	} else if mode = os.Getenv("CONTAINER_MODE"); mode == "sidecar" || mode == "standalone" {
 		containerMode = mode
 	}
 	return containerMode
