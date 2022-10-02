@@ -8,6 +8,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"strings"
 
 	"github.com/cyberark/secrets-provider-for-k8s/pkg/log/messages"
 )
@@ -16,9 +17,15 @@ type RetrieveK8sSecretFunc func(namespace string, secretName string) (*v1.Secret
 type UpdateK8sSecretFunc func(namespace string, secretName string, originalK8sSecret *v1.Secret, stringDataEntriesMap map[string][]byte) error
 type RetrieveK8sSecretListFunc func(namespace string) (*v1.SecretList, error)
 
+var kubeClient *kubernetes.Clientset
+
+func init() {
+	kubeClient, _ = configK8sClient()
+}
+
 func RetrieveK8sSecret(namespace string, secretName string) (*v1.Secret, error) {
 	// get K8s client object
-	kubeClient, _ := configK8sClient()
+	//kubeClient, _ := configK8sClient()
 	log.Info(messages.CSPFK005I, secretName, namespace)
 	k8sSecret, err := kubeClient.CoreV1().Secrets(namespace).Get(context.Background(), secretName, metav1.GetOptions{})
 	if err != nil {
@@ -31,8 +38,10 @@ func RetrieveK8sSecret(namespace string, secretName string) (*v1.Secret, error) 
 }
 
 func UpdateK8sSecret(namespace string, secretName string, originalK8sSecret *v1.Secret, stringDataEntriesMap map[string][]byte) error {
-	// get K8s client object
-	kubeClient, _ := configK8sClient()
+	return updateK8sSecretWithRetry(true, namespace, secretName, originalK8sSecret, stringDataEntriesMap)
+}
+
+func updateK8sSecretWithRetry(shouldRetry bool, namespace string, secretName string, originalK8sSecret *v1.Secret, stringDataEntriesMap map[string][]byte, variablesErrorsMap ...map[string]string) error {
 
 	if originalK8sSecret.Data == nil {
 		originalK8sSecret.Data = map[string][]byte{}
@@ -44,6 +53,11 @@ func UpdateK8sSecret(namespace string, secretName string, originalK8sSecret *v1.
 	}
 
 	log.Info(messages.CSPFK006I, secretName, namespace)
+	//add magic annotation to let mutation webhook know it should ignore this action
+	originalK8sSecret.Annotations["conjur.org/just-provided"] = "true"
+	originalK8sSecret.SetAnnotations(originalK8sSecret.Annotations)
+
+	log.Debug(messages.CSPFK006I, secretName, namespace)
 	_, err := kubeClient.CoreV1().Secrets(namespace).Update(context.Background(), originalK8sSecret, metav1.UpdateOptions{})
 	// Clear secret from memory
 	stringDataEntriesMap = nil
@@ -51,6 +65,14 @@ func UpdateK8sSecret(namespace string, secretName string, originalK8sSecret *v1.
 	if err != nil {
 		// Error messages returned from K8s should be printed only in debug mode
 		log.Debug(messages.CSPFK005D, err.Error())
+		//race condition  between period provisioning and   webhook provisioning might have occurred. Give it another chance
+		if shouldRetry && strings.Contains(err.Error(), "please apply your changes to the latest version and try again") {
+			originalK8sSecret, err = kubeClient.CoreV1().Secrets(namespace).Get(context.Background(), secretName, metav1.GetOptions{})
+			if err != nil {
+				log.Debug("Trying update secret one more time.")
+				return updateK8sSecretWithRetry(false, namespace, secretName, originalK8sSecret, stringDataEntriesMap, variablesErrorsMap...)
+			}
+		}
 		return log.RecordedError(messages.CSPFK022E)
 	}
 
@@ -58,7 +80,6 @@ func UpdateK8sSecret(namespace string, secretName string, originalK8sSecret *v1.
 }
 
 func RetrieveK8sSecretList(namespace string) (*v1.SecretList, error) {
-	kubeClient, _ := configK8sClient()
 	log.Info("Retrieving labeled Kubernetes secrets from namespace '%s'", namespace)
 	return kubeClient.CoreV1().Secrets(namespace).List(context.TODO(), metav1.ListOptions{LabelSelector: "conjur.org/managed-by-provider=true"})
 }

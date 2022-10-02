@@ -131,7 +131,7 @@ func startSecretsProviderWithDeps(
 		},
 		provideSecrets,
 		statusUpdaterFactory(),
-		secretsConfig.PodNamespace,
+		secretsConfig,
 	); err != nil {
 		logError(err.Error())
 	}
