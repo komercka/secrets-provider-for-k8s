@@ -1,3 +1,67 @@
+# KB
+
+this is fork repository with KB modifications to improve password rotation  scenario.
+
+NOTE: current KB version is base on origin version 1.7.x.  
+
+### versioning
+
+custom modifications are held in branches `kb/<origin version>` where `<origin version>` means version of the origin product version on which out branch is based on.  
+
+E.g; kb/1.7 means it is a branch based on version 1.7.x of the origin conjur-secret-provider  
+
+The commit from which new relase version is created must have version tag in format:  
+
+`<origin version>-KB.<kb version>`
+
+e.g.  
+current relase version `1.7.1-KB.1`  
+if there will some modification in kb/1.7 branch, next version tag  will be `1.7.1-KB.2`, next `1.7.1-KB.3`
+
+
+### upgrading
+
+There are two possible ways:  
+(assume we are going from version 1.7.x to  1.9.x)
+
+1) rebase branch
+
+- in Github sync KB master with CyberArk master branch
+- on top of actual KB branch create new branch for next version. For example on actual branch kb/1.7 create new branch kb/1.9 (git checkout -b ... )
+- rebase newly created branch (kb/1.9) onto synced master branch (git rebase --onto ... )  
+- resolve conflicts  
+- after successful rebase is done check it can be build   (docker build ...)
+- create tag 1.9.0-KB.1  
+- push newly rebased kb/1.9 with tag into remote Github repository  
+
+2) cherry-pick commits one-by-one manually
+
+- create new `kb-implementation-<origin version>` and cherry-pick or commits from previous `kb-implementation-` branch  
+
+- in Github sync KB master with CyberArk master branch
+- on actual synced master branch create new kb branch based on origin version -  kb/1.9 (git checkout -b ... )
+- one by one cherry pick commits from latest actual kb branch - from kb/1.7 (git cherry-pick ... )
+- during every cherry-pick resolve conflicts 
+- after all commits are cherry picked check it can be build   (docker build ...)
+- create tag 1.9.0-KB.1
+- push newly rebased kb/1.9 with tag into remote Github repository
+
+### build
+
+only manual build. KB CI build is not possible.  
+
+```
+docker buildx build --platform linux/amd64 --load --tag <docker-registry>/kb-secrets-provider-for-k8s:<versin> . -f ./Dockerfile
+```
+
+### release
+
+- manually build image with release version tag
+- push to target docker registry
+- create and push git tag on commit from the build has been created (see versioning & upgrade)
+
+________________________________
+
 # Table of Contents
 
 - [Table of Contents](#table-of-contents)
