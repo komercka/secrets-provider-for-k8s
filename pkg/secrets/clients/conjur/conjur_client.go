@@ -19,7 +19,7 @@ type ConjurClient interface {
 }
 
 func NewConjurClient(tokenData []byte) (ConjurClient, error) {
-	log.Info(messages.CSPFK002I)
+	log.Debug(messages.CSPFK002I)
 	config, err := conjurapi.LoadConfig()
 	if err != nil {
 		return nil, log.RecordedError(messages.CSPFK031E, err.Error())
