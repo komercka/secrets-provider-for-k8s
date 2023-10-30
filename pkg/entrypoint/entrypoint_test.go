@@ -36,12 +36,12 @@ func (r mockRetriever) Retrieve(auth string, ids []string, c context.Context) (m
 
 type mockProviderFactory struct {
 	providerFunc secrets.ProviderFunc
-	deleteFunc   secrets.DeleterFunc
+	deleterFunc  secrets.DeleterFunc
 	errs         []error
 }
 
 func (p mockProviderFactory) GetProvider(traceContext context.Context, secretsRetrieverFunc conjur.RetrieveSecretsFunc, providerConfig secrets.ProviderConfig) (secrets.ProviderFunc, secrets.DeleterFunc, []error) {
-	return p.providerFunc, p.deleteFunc, p.errs
+	return p.providerFunc, p.deleterFunc, p.errs
 }
 
 func getMockStatusUpdater() secrets.StatusUpdater {
@@ -126,7 +126,7 @@ func TestStartSecretsProvider(t *testing.T) {
 				}.Retrieve,
 			},
 			providerFactory: mockProviderFactory{
-				providerFunc: func(...string) (bool, error) {
+				providerFunc: func(x ...string) (bool, error) {
 					return true, nil
 				},
 				errs: []error{},
@@ -148,7 +148,7 @@ func TestStartSecretsProvider(t *testing.T) {
 				}.Retrieve,
 			},
 			providerFactory: mockProviderFactory{
-				providerFunc: func(...string) (bool, error) {
+				providerFunc: func(x ...string) (bool, error) {
 					return true, nil
 				},
 				errs: []error{errors.New("provider factory failure")},
@@ -171,7 +171,7 @@ func TestStartSecretsProvider(t *testing.T) {
 				err: errors.New("retriever factory failure"),
 			},
 			providerFactory: mockProviderFactory{
-				providerFunc: func(...string) (bool, error) {
+				providerFunc: func(x ...string) (bool, error) {
 					return true, nil
 				},
 				errs: []error{},
@@ -193,7 +193,7 @@ func TestStartSecretsProvider(t *testing.T) {
 				err: nil,
 			},
 			providerFactory: mockProviderFactory{
-				providerFunc: func(...string) (bool, error) {
+				providerFunc: func(x ...string) (bool, error) {
 					return true, nil
 				},
 				errs: []error{},
@@ -215,7 +215,7 @@ func TestStartSecretsProvider(t *testing.T) {
 				err: nil,
 			},
 			providerFactory: mockProviderFactory{
-				providerFunc: func(...string) (bool, error) {
+				providerFunc: func(x ...string) (bool, error) {
 					return true, nil
 				},
 				errs: []error{},
@@ -237,7 +237,7 @@ func TestStartSecretsProvider(t *testing.T) {
 				err: nil,
 			},
 			providerFactory: mockProviderFactory{
-				providerFunc: func(...string) (bool, error) {
+				providerFunc: func(x ...string) (bool, error) {
 					return true, nil
 				},
 				errs: []error{},
