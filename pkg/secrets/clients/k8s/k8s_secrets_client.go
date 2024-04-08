@@ -53,6 +53,9 @@ func updateK8sSecretWithRetry(shouldRetry bool, namespace string, secretName str
 	}
 
 	//add magic annotation to let mutation webhook know it should ignore this action
+	if originalK8sSecret.Annotations == nil {
+		originalK8sSecret.Annotations = make(map[string]string)
+	}
 	originalK8sSecret.Annotations["conjur.org/just-provided"] = "true"
 	originalK8sSecret.SetAnnotations(originalK8sSecret.Annotations)
 
