@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/cyberark/conjur-authn-k8s-client/pkg/log"
+	"github.com/cyberark/secrets-provider-for-k8s/pkg/secrets/annotations"
 	k8sSecretsStorage "github.com/cyberark/secrets-provider-for-k8s/pkg/secrets/k8s_secrets_storage"
 	"io/ioutil"
 	admission "k8s.io/api/admission/v1"
@@ -15,7 +16,7 @@ import (
 	"net/http"
 )
 
-type MutateFunc func(v1.Secret) (secret v1.Secret, err error, patchData map[string][]byte)
+type MutateFunc func(v1.Secret) (secret v1.Secret, err error, patchData map[string][]byte, variblesErrorMsg string)
 
 type WebhookServer struct {
 	server     *http.Server
@@ -107,6 +108,8 @@ func (whsvr *WebhookServer) serve(w http.ResponseWriter, r *http.Request) {
 	var patch []patchOperation
 	muatatePatchType := admission.PatchTypeJSONPatch
 	var patchSecretData map[string]string
+	var variableErrorsMsg string
+	patchOp := "add"
 
 	if err := json.Unmarshal(ar.Request.Object.Raw, &secret); err != nil {
 		log.Error(err.Error())
@@ -126,11 +129,28 @@ func (whsvr *WebhookServer) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_, err, patchData = whsvr.provider.Mutate(secret)
+	secret, err, patchData, variableErrorsMsg = whsvr.provider.Mutate(secret)
+	if secret.Annotations == nil {
+		patch = append(patch, patchOperation{
+			Op:    "add",
+			Path:  "/metadata/annotations",
+			Value: map[string]string{},
+		})
+	}
+
 	if err != nil {
 		log.Error(err.Error())
+		patchOp = "add"
+		if secret.Annotations[annotations.LastProvidedErrors] != "" {
+			patchOp = "replace"
+		}
+		patch = append(patch, patchOperation{
+			Op:    patchOp,
+			Path:  "/metadata/annotations/" + annotations.LastProvidedErrors,
+			Value: err.Error(),
+		})
 		admissionReview.Response.Result.Message = err.Error()
-		return
+		goto response
 	}
 
 	log.Debug("%s", patchData)
@@ -138,11 +158,32 @@ func (whsvr *WebhookServer) serve(w http.ResponseWriter, r *http.Request) {
 	for itemName, secretValue := range patchData {
 		patchSecretData[itemName] = string(secretValue)
 	}
+	patchOp = "add"
+	if secret.StringData != nil {
+		patchOp = "replace"
+	}
 	patch = append(patch, patchOperation{
-		Op:    "add",
+		Op:    patchOp,
 		Path:  "/stringData",
 		Value: patchSecretData,
 	})
+	if variableErrorsMsg != "" {
+		patchOp = "add"
+		if secret.Annotations[annotations.LastProvidedErrors] != "" {
+			patchOp = "replace"
+		}
+		patch = append(patch, patchOperation{
+			Op:    patchOp,
+			Path:  "/metadata/annotations/" + annotations.LastProvidedErrors,
+			Value: variableErrorsMsg,
+		})
+
+	} else if secret.Annotations[annotations.LastProvidedErrors] != "" {
+		patch = append(patch, patchOperation{
+			Op:   "remove",
+			Path: "/metadata/annotations/" + annotations.LastProvidedErrors,
+		})
+	}
 
 response:
 	admissionReview.Response.PatchType = &muatatePatchType
