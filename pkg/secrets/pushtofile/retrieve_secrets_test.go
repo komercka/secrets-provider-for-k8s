@@ -21,7 +21,7 @@ func (tc retrieveSecretsTestCase) Run(
 ) {
 	t.Run(tc.description, func(t *testing.T) {
 		s := createSecretGroups(tc.secretSpecs)
-		ret, err := FetchSecretsForGroups(depFetchSecrets, s, context.Background())
+		ret, err, _ := FetchSecretsForGroups(depFetchSecrets, s, context.Background())
 
 		tc.assert(t, ret, err)
 	})
@@ -244,8 +244,8 @@ type mockSecretFetcher struct {
 	conjurMockClient *conjurMocks.ConjurMockClient
 }
 
-func (s mockSecretFetcher) Fetch(secretPaths []string, ctx context.Context) (map[string][]byte, error) {
-	return s.conjurMockClient.RetrieveSecrets(secretPaths, context.Background())
+func (s mockSecretFetcher) Fetch(_ string, secretPaths []string, ctx context.Context) (map[string][]byte, error, map[string]string) {
+	return s.conjurMockClient.RetrieveSecrets("", secretPaths, context.Background())
 }
 
 func newMockSecretFetcher() mockSecretFetcher {

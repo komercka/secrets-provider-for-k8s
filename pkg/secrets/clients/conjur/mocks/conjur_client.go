@@ -17,17 +17,17 @@ type ConjurMockClient struct {
 	AutoGenerateResults bool
 }
 
-func (mc *ConjurMockClient) RetrieveSecrets(variableIDs []string, _ context.Context) (map[string][]byte, error) {
+func (mc *ConjurMockClient) RetrieveSecrets(_ string, variableIDs []string, _ context.Context) (map[string][]byte, error, map[string]string) {
 	return mc.RetrieveBatchSecretsSafe(variableIDs)
 }
 
-func (mc *ConjurMockClient) RetrieveBatchSecretsSafe(variableIDs []string) (map[string][]byte, error) {
+func (mc *ConjurMockClient) RetrieveBatchSecretsSafe(variableIDs []string) (map[string][]byte, error, map[string]string) {
 	if mc.ErrOnExecute != nil {
-		return nil, mc.ErrOnExecute
+		return nil, mc.ErrOnExecute, map[string]string{}
 	}
 
 	if mc.ReturnNoSecrets {
-		return map[string][]byte{}, nil
+		return map[string][]byte{}, nil, map[string]string{}
 	}
 
 	secrets := make(map[string][]byte)
@@ -36,7 +36,7 @@ func (mc *ConjurMockClient) RetrieveBatchSecretsSafe(variableIDs []string) (map[
 		// Generate random values for all the secrets requested
 		for _, id := range variableIDs {
 			if id == "error" {
-				return nil, errors.New("error")
+				return nil, errors.New("error"), map[string]string{}
 			}
 			fullID := fmt.Sprintf("conjur:variable:%s", id)
 			secrets[fullID] = []byte("secret")
@@ -47,21 +47,21 @@ func (mc *ConjurMockClient) RetrieveBatchSecretsSafe(variableIDs []string) (map[
 			if secretID == "*" {
 				secrets = mc.getAllSecrets()
 				if len(secrets) == 0 {
-					return nil, fmt.Errorf(messages.CSPFK034E, "no variables to retrieve")
+					return nil, fmt.Errorf(messages.CSPFK034E, "no variables to retrieve"), map[string]string{}
 				}
-				return secrets, nil
+				return secrets, nil, map[string]string{}
 			}
 
 			// Check if the secret exists in the mock Conjur DB
 			variableData, ok := mc.Database[secretID]
 			if !ok {
-				return nil, errors.New("no_conjur_secret_error")
+				return nil, errors.New("no_conjur_secret_error"), map[string]string{}
 			}
 			secrets[secretID] = []byte(variableData)
 		}
 	}
 
-	return secrets, nil
+	return secrets, nil, map[string]string{}
 }
 
 func (mc *ConjurMockClient) Resources(filter *conjurapi.ResourceFilter) (resources []map[string]interface{}, err error) {
