@@ -2,8 +2,10 @@ package k8s
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/cyberark/conjur-authn-k8s-client/pkg/log"
+	"github.com/cyberark/secrets-provider-for-k8s/pkg/secrets/annotations"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -14,7 +16,7 @@ import (
 )
 
 type RetrieveK8sSecretFunc func(namespace string, secretName string) (*v1.Secret, error)
-type UpdateK8sSecretFunc func(namespace string, secretName string, originalK8sSecret *v1.Secret, stringDataEntriesMap map[string][]byte) error
+type UpdateK8sSecretFunc func(namespace string, secretName string, originalK8sSecret *v1.Secret, stringDataEntriesMap map[string][]byte, variablesErrorsMap ...map[string]string) error
 type RetrieveK8sSecretListFunc func() (*v1.SecretList, error)
 
 var kubeClient *kubernetes.Clientset
@@ -37,8 +39,8 @@ func RetrieveK8sSecret(namespace string, secretName string) (*v1.Secret, error) 
 	return k8sSecret, nil
 }
 
-func UpdateK8sSecret(namespace string, secretName string, originalK8sSecret *v1.Secret, stringDataEntriesMap map[string][]byte) error {
-	return updateK8sSecretWithRetry(true, namespace, secretName, originalK8sSecret, stringDataEntriesMap)
+func UpdateK8sSecret(namespace string, secretName string, originalK8sSecret *v1.Secret, stringDataEntriesMap map[string][]byte, variablesErrorsMap ...map[string]string) error {
+	return updateK8sSecretWithRetry(true, namespace, secretName, originalK8sSecret, stringDataEntriesMap, variablesErrorsMap...)
 }
 
 func updateK8sSecretWithRetry(shouldRetry bool, namespace string, secretName string, originalK8sSecret *v1.Secret, stringDataEntriesMap map[string][]byte, variablesErrorsMap ...map[string]string) error {
@@ -58,6 +60,19 @@ func updateK8sSecretWithRetry(shouldRetry bool, namespace string, secretName str
 	}
 	originalK8sSecret.Annotations["conjur.org/just-provided"] = "true"
 	originalK8sSecret.SetAnnotations(originalK8sSecret.Annotations)
+	//delete old errors
+	delete(originalK8sSecret.Annotations, annotations.LastProvidedErrors)
+	originalK8sSecret.SetAnnotations(originalK8sSecret.Annotations)
+
+	if len(variablesErrorsMap) > 0 && len(variablesErrorsMap[0]) > 0 {
+		jsonErrorMsq, err := json.Marshal(&variablesErrorsMap)
+		if err == nil {
+			//add latest errors
+			originalK8sSecret.Annotations[annotations.LastProvidedErrors] = string(jsonErrorMsq)
+			originalK8sSecret.SetAnnotations(originalK8sSecret.Annotations)
+		}
+
+	}
 
 	log.Debug(messages.CSPFK006I, secretName, namespace)
 	_, err := kubeClient.CoreV1().Secrets(namespace).Update(context.Background(), originalK8sSecret, metav1.UpdateOptions{})
