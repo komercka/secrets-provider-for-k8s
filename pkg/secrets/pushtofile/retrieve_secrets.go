@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"slices"
-
 	"github.com/cyberark/conjur-authn-k8s-client/pkg/log"
 	"github.com/cyberark/secrets-provider-for-k8s/pkg/log/messages"
 	"github.com/cyberark/secrets-provider-for-k8s/pkg/secrets/clients/conjur"
@@ -25,56 +23,50 @@ func FetchSecretsForGroups(
 	depRetrieveSecrets conjur.RetrieveSecretsFunc,
 	secretGroups []*SecretGroup,
 	traceContext context.Context,
-) (map[string][]*Secret, error) {
+) (map[string][]*Secret, error, map[string]string) {
 	var err error
 	secretsByGroup := map[string][]*Secret{}
 
 	secretPaths := getAllPaths(secretGroups)
-	secretValueById, err := depRetrieveSecrets("", secretPaths, traceContext)
+	secretValueById, err, variableErrors := depRetrieveSecrets("", secretPaths, traceContext)
 	if err != nil {
-		return nil, err
+		return nil, err, nil
 	}
-	defer func() {
-		// Clear Conjur secret values from memory
-		for i := range secretValueById {
-			for b := range secretValueById[i] {
-				secretValueById[i][b] = 0
-			}
-		}
-	}()
 
 	for _, group := range secretGroups {
 		for _, spec := range group.SecretSpecs {
-			paths := []string{spec.Path}
-			// If the path is "*", then we should populate all the fetched secrets
-			if spec.Path == "*" {
-				paths = []string{}
-				for path := range secretValueById {
-					paths = append(paths, path)
-				}
-
-				// In Fetch All mode, we need to sort the secrets alphabetically.
-				// This is to ensure that the order of the secrets is deterministic, which
-				// is important both for testing and to avoid unnecessary updates to the
-				// secret files and other hard-to-debug issues.
-				slices.Sort(paths)
+			sValue, ok := secretValueById[spec.Path]
+			if !ok {
+				err = fmt.Errorf(
+					"secret with alias %q not present in fetched secrets",
+					spec.Alias,
+				)
+				return nil, err, variableErrors
 			}
-
-			for _, path := range paths {
-				secret, err := getSecretValueByID(secretValueById, spec, path)
-				// This error will occur when using Fetch All together with another group that has a secret spec
-				// with a path that is not present in the fetched secrets. In this case, we should imitate the behavior
-				// of a missing secret in non-Fetch All mode - i.e., return an error. This will allow the caller to
-				// decide whether to leave the secret files as is or to delete them (if sanitize is enabled).
+			if spec.ContentType == "base64" {
+				decodedSecretValue := make([]byte, base64.StdEncoding.DecodedLen(len(sValue)))
+				_, err := base64.StdEncoding.Decode(decodedSecretValue, sValue)
+				decodedSecretValue = bytes.Trim(decodedSecretValue, "\x00")
 				if err != nil {
-					return nil, fmt.Errorf(messages.CSPFK068E, path, group.Name)
+					// Log the error as a warning but still provide the original secret value
+					log.Warn(messages.CSPFK064E, spec.Alias, spec.ContentType, err.Error())
+				} else {
+					sValue = decodedSecretValue
 				}
-				secretsByGroup[group.Name] = append(secretsByGroup[group.Name], secret)
+				decodedSecretValue = []byte{}
 			}
+			secretsByGroup[group.Name] = append(
+				secretsByGroup[group.Name],
+				&Secret{
+					Alias: spec.Alias,
+					Value: string(sValue),
+				},
+			)
+			sValue = []byte{}
 		}
 	}
 
-	return secretsByGroup, err
+	return secretsByGroup, err, variableErrors
 }
 
 func getSecretValueByID(secretValuesByID map[string][]byte, spec SecretSpec, path string) (*Secret, error) {
