@@ -98,7 +98,7 @@ type K8sProvider struct {
 	//prevSecretsChecksums maps a k8s secret name to a sha256 checksum of the
 	// corresponding secret content. This is used to detect changes in
 	// secret content.
-	prevSecretsChecksums map[string]utils.Checksum
+	prevSecretsChecksums PrevSecretsChecksums
 	// Maps a K8s Secret name to the original K8s Secret API object fetched
 	// from K8s.
 	originalK8sSecrets map[string]*v1.Secret
@@ -122,6 +122,7 @@ type ConjurVariable struct {
 var lock sync.Mutex
 var updateSecretLock sync.Mutex
 var retrieveSecretLock sync.Mutex
+var deleteSecretLock sync.Mutex
 
 // NewProvider creates a new secret provider for K8s Secrets mode.
 func NewProvider(
@@ -173,7 +174,7 @@ func newProvider(
 			updateDestinations: map[string][]updateDestination{},
 		},
 		traceContext:         traceContext,
-		prevSecretsChecksums: map[string]utils.Checksum{},
+		prevSecretsChecksums: PrevSecretsChecksums{},
 		originalK8sSecrets:   map[string]*v1.Secret{},
 		secretsGroups:        map[string]map[string][]*pushtofile.SecretGroup{},
 		prevVariablesValues:  map[string]map[string][]byte{},
@@ -342,7 +343,7 @@ func (p *K8sProvider) Mutate(secret v1.Secret) (v1.Secret, error, map[string][]b
 	//calculate checksum from roted data map as it would be retrieved from k8s
 	_, _ = fmt.Fprintf(b, "%v", sortedMapForcheckum)
 	checksum, _ := utils.FileChecksum(b)
-	p.prevSecretsChecksums[fullK8sSecretName] = checksum
+	p.prevSecretsChecksums.set(fullK8sSecretName, checksum)
 
 	p.log.info("Secret %s mutated", fullK8sSecretName)
 
@@ -381,9 +382,11 @@ func (p *K8sProvider) removeDeletedSecrets(tr trace.Tracer) error {
 	return nil
 }
 func (p K8sProvider) Delete(secrets []string) {
+	deleteSecretLock.Lock()
+	defer deleteSecretLock.Unlock()
 	emptySecrets := make(map[string][]byte)
 	for _, secret := range secrets {
-		delete(p.prevSecretsChecksums, secret)
+		p.prevSecretsChecksums.delete(secret)
 		emptySecrets[secret] = []byte("")
 	}
 	for _, secret := range secrets {
@@ -751,7 +754,7 @@ func (p *K8sProvider) updateRequiredK8sSecrets(
 			// Calculate a sha256 checksum on the content
 			checksum, _ := utils.FileChecksum(b)
 
-			if utils.ContentHasChanged(k8sSecretFullName, checksum, p.prevSecretsChecksums) {
+			if utils.ContentHasChanged(checksum, p.prevSecretsChecksums.get(k8sSecretFullName)) {
 				secretFullNameParsed := strings.Split(k8sSecretFullName, "/")
 				err := p.k8s.updateSecret(
 					secretFullNameParsed[0],
@@ -767,7 +770,7 @@ func (p *K8sProvider) updateRequiredK8sSecrets(
 					continue
 					//return false, p.log.recordedError(messages.CSPFK022E)
 				}
-				p.prevSecretsChecksums[k8sSecretFullName] = checksum
+				p.prevSecretsChecksums.set(k8sSecretFullName, checksum)
 				updated = true
 				p.log.info("CSPFK009I %s kubernetes secret content updated", k8sSecretFullName)
 			} else {
@@ -1001,10 +1004,10 @@ func (p *K8sProvider) deleteK8sSecret(k8sFullSecretName string) {
 	}
 
 	delete(p.originalK8sSecrets, k8sFullSecretName)
-	delete(p.prevSecretsChecksums, k8sFullSecretName)
+	p.prevSecretsChecksums.delete(k8sFullSecretName)
 }
 
 func (p K8sProvider) CheckContentHasChanged(groupName string, newChecksum utils.Checksum) bool {
-	return utils.ContentHasChanged(groupName, newChecksum, p.prevSecretsChecksums)
+	return utils.ContentHasChanged(newChecksum, p.prevSecretsChecksums.get(groupName))
 
 }
