@@ -189,12 +189,14 @@ func (p *K8sProvider) Provide() (bool, error) {
 	// Clear the secrets' state from memory. This prevents leakage of the secret values
 	// in `originalK8sSecrets` and prevents `updateDestinations` from growing each time
 	// the provider is run (e.g. during rotation).
-	p.secretsState = k8sSecretsState{
-		originalK8sSecrets: map[string]*v1.Secret{},
-		updateDestinations: map[string][]updateDestination{},
-	}
+	//p.secretsState = k8sSecretsState{
+	//	originalK8sSecrets: map[string]*v1.Secret{},
+	//	updateDestinations: map[string][]updateDestination{},
+	//}
 
-	p.log.info(messages.CSPFK009I)
+	if updated {
+		p.log.info(messages.CSPFK009I)
+	}
 	return updated, nil
 }
 
@@ -394,8 +396,10 @@ func (p *K8sProvider) updateRequiredK8sSecrets(
 			}
 			p.prevSecretsChecksums[k8sSecretName] = checksum
 			updated = true
+			p.log.info("CSPFK009I %s kubernetes secret content updated", k8sSecretName)
 		} else {
-			p.log.info(messages.CSPFK020I)
+			p.log.debug("%s in %s", messages.CSPFK020I, k8sSecretName)
+			updated = false
 		}
 	}
 

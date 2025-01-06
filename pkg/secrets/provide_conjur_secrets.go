@@ -128,6 +128,7 @@ func RunSecretsProvider(
 	config ProviderRefreshConfig,
 	provideSecrets ProviderFunc,
 	status StatusUpdater,
+	namespace string,
 ) error {
 
 	var periodicQuit = make(chan struct{})
@@ -138,19 +139,21 @@ func RunSecretsProvider(
 	if err = status.CopyScripts(); err != nil {
 		return err
 	}
-	if _, err = provideSecrets(); err != nil {
-		// Return immediately upon error, regardless of operating mode
-		return err
+	if _, err = provideSecrets(); err != nil && (config.Mode != "sidecar" && config.Mode != "application") {
 	}
-	err = status.SetSecretsProvided()
-	if err != nil {
-		return err
+	if err == nil {
+		err = status.SetSecretsProvided()
+		// In sidecar or application mode provider should keep running
+		if err != nil && (config.Mode != "sidecar" && config.Mode != "application") {
+			return err
+		}
 	}
 	switch {
-	case config.Mode != "sidecar":
+	case config.Mode != "sidecar" && config.Mode != "application":
 		// Run once and return if not in sidecar mode
 		return nil
-	case config.SecretRefreshInterval > 0:
+	case config.Mode == "application":
+		log.Info(fmt.Sprintf(messages.CSPFK025I, config.SecretRefreshInterval))
 		// Run periodically if in sidecar mode with periodic refresh
 		ticker = time.NewTicker(config.SecretRefreshInterval)
 		config := periodicConfig{
@@ -170,7 +173,11 @@ func RunSecretsProvider(
 	case <-config.ProviderQuit:
 		break
 	case err = <-periodicError:
-		break
+		//periodic provider in standalone mode should keep working event there is provision errors.
+		//errors should be appropriately logged so user can see what went wrong.
+		if config.Mode != "application" {
+			break
+		}
 	}
 
 	// Allow the periodicSecretProvider goroutine to gracefully shut down
@@ -200,13 +207,15 @@ func periodicSecretProvider(
 		case <-config.periodicQuit:
 			return
 		case <-config.ticker.C:
+			log.Info(messages.CSPFK022E)
 			updated, err := provideSecrets()
 			if err == nil && updated {
+				log.Debug("Periodic provider run finished")
 				err = status.SetSecretsUpdated()
 			}
-			if err != nil {
+			/*if err != nil {
 				config.periodicError <- err
-			}
+			}*/
 		}
 	}
 }
