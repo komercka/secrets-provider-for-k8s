@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	k8swebhooks "github.com/cyberark/secrets-provider-for-k8s/pkg/secrets/k8s_webhooks"
+	"math/rand"
 	"time"
 
 	"github.com/cenkalti/backoff"
@@ -48,6 +49,14 @@ type RepeatableProviderFunc func() error
 // ProviderFactory defines a function type for creating a ProviderFunc given a
 // RetrieveSecretsFunc and ProviderConfig.
 type ProviderFactory func(traceContent context.Context, secretsRetrieverFunc conjur.RetrieveSecretsFunc, providerConfig ProviderConfig) (ProviderFunc, []error)
+
+// RandomTicker defines custom ticker with random element
+type RandomTicker struct {
+	C     chan time.Time
+	stopc chan struct{}
+	min   int64
+	max   int64
+}
 
 // NewProviderForType returns a ProviderFunc responsible for providing secrets in a given mode.
 func NewProviderForType(
@@ -142,6 +151,10 @@ func RunSecretsProvider(
 	if err = status.CopyScripts(); err != nil {
 		return err
 	}
+	rand.New(rand.NewSource(time.Now().UnixNano()))
+	n := rand.Intn(5000) // n will be between 0 and 5000ms(5s)
+	log.Info("Waiting randomly %d ms...", n)
+	time.Sleep(time.Duration(n) * time.Millisecond)
 	if _, err = provideSecrets(providerConfig.RequiredK8sSecrets...); err != nil && (config.Mode != "sidecar" && config.Mode != "application") {
 		return err
 	}
@@ -157,11 +170,12 @@ func RunSecretsProvider(
 		// Run once and return if not in sidecar mode
 		return nil
 	case config.Mode == "application":
-		log.Info(fmt.Sprintf(messages.CSPFK025I, config.SecretRefreshInterval))
+		log.Info(fmt.Sprintf(messages.CSPFK025I, config.SecretRefreshInterval) + ". Actual refresh interval will be randomized by +-10% of configured time.")
 		// Run periodically if in sidecar mode with periodic refresh
-		ticker = time.NewTicker(config.SecretRefreshInterval)
 		config := periodicConfig{
-			ticker:        ticker,
+			ticker: newRandomTicker(
+				time.Duration(0.9*(float64(config.SecretRefreshInterval.Nanoseconds()))),
+				time.Duration(1.1*(float64(config.SecretRefreshInterval.Nanoseconds())))),
 			periodicQuit:  periodicQuit,
 			periodicError: periodicError,
 		}
@@ -196,7 +210,7 @@ func RunSecretsProvider(
 }
 
 type periodicConfig struct {
-	ticker        *time.Ticker
+	ticker        *RandomTicker
 	periodicQuit  <-chan struct{}
 	periodicError chan<- error
 }
@@ -212,10 +226,10 @@ func periodicSecretProvider(
 		case <-config.periodicQuit:
 			return
 		case <-config.ticker.C:
-			log.Info(messages.CSPFK022E)
+			log.Info(messages.CSPFK024I)
 			updated, err := provideSecrets(requiredK8sSecrets...)
 			if err == nil && updated {
-				log.Debug("Periodic provider run finished")
+				log.Info("Periodic provider run finished")
 				err = status.SetSecretsUpdated()
 			}
 			/*if err != nil {
@@ -223,4 +237,51 @@ func periodicSecretProvider(
 			}*/
 		}
 	}
+}
+
+// defines the RandomTicker behaviour
+func (rt *RandomTicker) loop() {
+	t := time.NewTimer(rt.nextInterval())
+	for {
+		select {
+		case <-rt.stopc:
+			t.Stop()
+			return
+		case <-t.C:
+			select {
+			case rt.C <- time.Now():
+				t.Stop()
+				t = time.NewTimer(rt.nextInterval())
+			default:
+				// skip if there is no receiver
+			}
+		}
+	}
+}
+
+// define next  interval for RandomTicker loop
+func (rt *RandomTicker) nextInterval() time.Duration {
+	interval := rand.Int63n(rt.max-rt.min) + rt.min
+	timeInterval := time.Duration(interval) * time.Nanosecond
+	return timeInterval
+}
+
+// NewRandomTicker returns a pointer to an initialized instance of the
+// RandomTicker. Min and max are durations of the shortest and longest
+// allowed ticks. Ticker will run in a goroutine until explicitly stopped.
+func newRandomTicker(min, max time.Duration) *RandomTicker {
+	rt := &RandomTicker{
+		C:     make(chan time.Time),
+		stopc: make(chan struct{}),
+		min:   min.Nanoseconds(),
+		max:   max.Nanoseconds(),
+	}
+	go rt.loop()
+	return rt
+}
+
+// Stop terminates the ticker goroutine and closes the C channel.
+func (rt *RandomTicker) Stop() {
+	close(rt.stopc)
+	close(rt.C)
 }
