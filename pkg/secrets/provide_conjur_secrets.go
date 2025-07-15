@@ -169,7 +169,7 @@ func RunSecretsProvider(
 	case config.Mode != "sidecar" && config.Mode != "application":
 		// Run once and return if not in sidecar mode
 		return nil
-	case config.Mode == "application":
+	case config.Mode == "application" || config.Mode == "sidecar":
 		log.Info(fmt.Sprintf(messages.CSPFK025I, config.SecretRefreshInterval) + ". Actual refresh interval will be randomized by +-10% of configured time.")
 		// Run periodically if in sidecar mode with periodic refresh
 		config := periodicConfig{

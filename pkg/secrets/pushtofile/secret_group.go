@@ -120,44 +120,45 @@ func (sg *SecretGroup) pushToFileWithDeps(
 func (sg *SecretGroup) absoluteFilePath(secretsBasePath string) (string, error) {
 	groupName := sg.Name
 	filePath := sg.FilePath
-	fileTemplate := sg.FileTemplate
-	fileExt := sg.FileFormat
+	//fileTemplate := sg.FileTemplate
+	//fileExt := sg.FileFormat
 
 	// filePath must be relative
-	if path.IsAbs(filePath) {
+	/*if path.IsAbs(filePath) {
 		return "", fmt.Errorf(
 			"provided filepath %q for secret group %q is absolute, requires relative path",
 			filePath, groupName,
 		)
-	}
+	}*/
 
 	pathContainsFilename := !strings.HasSuffix(filePath, "/") && len(filePath) > 0
 
 	if !pathContainsFilename {
-		if len(fileTemplate) > 0 {
+		/*if len(fileTemplate) > 0 {
 			// Template filename defaults to "{groupName}.out"
 			fileExt = "out"
-		}
+		}*/
 
 		// For all other formats, the filename defaults to "{groupName}.{fileFormat}"
 		filePath = path.Join(
 			filePath,
-			fmt.Sprintf("%s.%s", groupName, fileExt),
+			fmt.Sprintf("%s", groupName),
 		)
 		log.Info(messages.CSPFK017I, groupName)
 	}
 
-	absoluteFilePath := path.Join(secretsBasePath, filePath)
+	//absoluteFilePath := path.Join(secretsBasePath, filePath)
+	absoluteFilePath := filePath
 
 	// filePath must be relative to secrets base path. This protects against relative paths
 	// that, by using the double-dot path segment, resolve to a path that is not relative
 	// to the base path.
-	if !strings.HasPrefix(absoluteFilePath, secretsBasePath) {
+	/*if !strings.HasPrefix(absoluteFilePath, secretsBasePath) {
 		return "", fmt.Errorf(
 			"provided filepath %q for secret group %q must be relative to secrets base path",
 			filePath, groupName,
 		)
-	}
+	}*/
 
 	// Filename cannot be longer than allowed by the filesystem
 	_, filename := path.Split(absoluteFilePath)
