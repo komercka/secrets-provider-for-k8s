@@ -187,6 +187,14 @@ func (p *K8sProvider) Provide(secrets ...string) (bool, error) {
 	lock.Lock()
 	defer lock.Unlock()
 
+	//prepare clean  data
+	//p.cleanupData()
+	p.originalK8sSecrets = map[string]*v1.Secret{}
+	p.secretsGroups = map[string]map[string][]*pushtofile.SecretGroup{}
+	p.secretsState = k8sSecretsState{
+		updateDestinations: map[string][]updateDestination{},
+	}
+
 	// Use the global TracerProvider
 	tr := trace.NewOtelTracer(otel.Tracer("secrets-provider"))
 	// Retrieve required K8s Secrets and parse their Data fields.
@@ -208,10 +216,6 @@ func (p *K8sProvider) Provide(secrets ...string) (bool, error) {
 				// Don't return here - continue processing
 			}
 		}
-
-		//cleanup
-		p.originalK8sSecrets = map[string]*v1.Secret{}
-		p.secretsGroups = map[string]map[string][]*pushtofile.SecretGroup{}
 
 		return updated, p.log.recordedError(messages.CSPFK034E, err.Error())
 	}
