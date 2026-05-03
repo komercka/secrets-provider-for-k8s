@@ -3,11 +3,12 @@ package conjur
 import (
 	"context"
 	"fmt"
-	"github.com/cyberark/conjur-authn-k8s-client/pkg/authenticator/common"
-	"github.com/cyberark/conjur-authn-k8s-client/pkg/authenticator/k8s"
 	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/cyberark/conjur-authn-k8s-client/pkg/authenticator/common"
+	"github.com/cyberark/conjur-authn-k8s-client/pkg/authenticator/k8s"
 
 	"github.com/cyberark/conjur-api-go/conjurapi"
 	"github.com/cyberark/conjur-authn-k8s-client/pkg/access_token/memory"
@@ -139,10 +140,10 @@ func (retriever secretRetriever) Retrieve(auth string, variableIDs []string, tra
 	}
 	defer span.End()
 
-	return retrieveConjurSecrets(auth, accessTokenData, variableIDs)
+	return retrieveConjurSecrets(auth, accessTokenData, variableIDs, nil)
 }
 
-func retrieveConjurSecrets(auth string, accessToken []byte, variableIDs []string) (map[string][]byte, error, map[string]string) {
+func retrieveConjurSecrets(auth string, accessToken []byte, variableIDs []string, conjurClient ConjurClient) (map[string][]byte, error, map[string]string) {
 	log.Debug(messages.CSPFK003I, variableIDs)
 
 	//prepare map for proved errors. The keys is variableID the values os error message
@@ -153,9 +154,13 @@ func retrieveConjurSecrets(auth string, accessToken []byte, variableIDs []string
 		return nil, nil, variableErrors
 	}
 
-	conjurClient, err := NewConjurClient(accessToken)
-	if err != nil {
-		return nil, log.RecordedError(messages.CSPFK033E), variableErrors
+	var err error = nil
+	//don't create in every recursive sub-call
+	if conjurClient == nil {
+		conjurClient, err = NewConjurClient(accessToken)
+		if err != nil {
+			return nil, log.RecordedError(messages.CSPFK033E), variableErrors
+		}
 	}
 
 	//if variableIDs array is too large, batch request may end up with nginx error response "414 Request-URI Too Large"
@@ -177,7 +182,7 @@ func retrieveConjurSecrets(auth string, accessToken []byte, variableIDs []string
 
 			//now variableIDs[i:j] is actual  sub-array (chunk)
 			log.Debug("Actual variableIDs sub-array indexes %d-%d", i, j)
-			if chunkRetrievedSecrets, _, chunkVariableErrors := retrieveConjurSecrets(auth, accessToken, variableIDs[i:j]); chunkRetrievedSecrets != nil {
+			if chunkRetrievedSecrets, _, chunkVariableErrors := retrieveConjurSecrets(auth, accessToken, variableIDs[i:j], conjurClient); chunkRetrievedSecrets != nil {
 				//add actuals rettrieved chunks secrets to the result map
 				for k, v := range chunkRetrievedSecrets {
 					resultRetrievedSecrets[k] = v
@@ -213,7 +218,7 @@ func retrieveConjurSecrets(auth string, accessToken []byte, variableIDs []string
 						break
 					}
 				}
-				recursiveRetrievedSecrets, recursiveError, recursiveVariableErrors := retrieveConjurSecrets(auth, accessToken, variableIDs)
+				recursiveRetrievedSecrets, recursiveError, recursiveVariableErrors := retrieveConjurSecrets(auth, accessToken, variableIDs, conjurClient)
 				for k, v := range variableErrors {
 					recursiveVariableErrors[k] = v
 				}
