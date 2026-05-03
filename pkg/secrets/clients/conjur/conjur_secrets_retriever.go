@@ -109,6 +109,8 @@ func (retriever secretRetriever) Retrieve(auth string, variableIDs []string, tra
 	if err != nil {
 		err = authn.AuthenticateWithContext(traceContext)
 	}
+	//after successfully auth close the connection as it is not needed anymore
+	authn.GetHttpClient().CloseIdleConnections()
 	if err != nil {
 		return nil, log.RecordedError("%s for %s authenticator", messages.CSPFK010E, auth), nil
 	}
@@ -231,6 +233,10 @@ func retrieveConjurSecrets(auth string, accessToken []byte, variableIDs []string
 		retrievedSecrets[normaliseVariableId(id)] = secret
 		delete(retrievedSecretsByFullIDs, id)
 	}
+
+	//this should be end of retrieve process (with all its recursive calls) so let close the connection as it is not needed anymore
+	conjurClient.GetHttpClient().CloseIdleConnections()
+
 	return retrievedSecrets, nil, variableErrors
 }
 

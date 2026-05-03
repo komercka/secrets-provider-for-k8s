@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net/http"
 
 	"github.com/cyberark/conjur-api-go/conjurapi"
 	"github.com/cyberark/secrets-provider-for-k8s/pkg/log/messages"
@@ -62,6 +63,10 @@ func (mc *ConjurMockClient) RetrieveBatchSecretsSafe(variableIDs []string) (map[
 	}
 
 	return secrets, nil, map[string]string{}
+}
+
+func (mc *ConjurMockClient) GetHttpClient() *http.Client {
+	return nil
 }
 
 func (mc *ConjurMockClient) Resources(filter *conjurapi.ResourceFilter) (resources []map[string]interface{}, err error) {

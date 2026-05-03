@@ -1,6 +1,8 @@
 package conjur
 
 import (
+	"net/http"
+
 	"github.com/cyberark/conjur-api-go/conjurapi"
 	"github.com/cyberark/conjur-authn-k8s-client/pkg/log"
 
@@ -16,6 +18,7 @@ The name ConjurClient also improves readability as Client can be ambiguous.
 type ConjurClient interface {
 	RetrieveBatchSecretsSafe([]string) (map[string][]byte, error)
 	Resources(filter *conjurapi.ResourceFilter) (resources []map[string]interface{}, err error)
+	GetHttpClient() *http.Client
 }
 
 func NewConjurClient(tokenData []byte) (ConjurClient, error) {
