@@ -120,8 +120,8 @@ type ConjurVariable struct {
 }
 
 var lock sync.Mutex
+var mutateMergeLock sync.Mutex
 var updateSecretLock sync.Mutex
-var retrieveSecretLock sync.Mutex
 var deleteSecretLock sync.Mutex
 
 // NewProvider creates a new secret provider for K8s Secrets mode.
@@ -184,8 +184,6 @@ func newProvider(
 // Provide implements a ProviderFunc to retrieve and push secrets to K8s secrets.
 // If secrets names is passed as parameter, it override configured secrets to provide
 func (p *K8sProvider) Provide(secrets ...string) (bool, error) {
-	lock.Lock()
-	defer lock.Unlock()
 
 	//prepare clean  data
 	//p.cleanupData()
@@ -241,31 +239,38 @@ func (p *K8sProvider) Provide(secrets ...string) (bool, error) {
 }
 
 func (p *K8sProvider) Mutate(secret v1.Secret) (v1.Secret, error, map[string][]byte, string) {
-	lock.Lock()
-	defer lock.Unlock()
+	// Create a local copy with fresh scratch state so concurrent Mutate calls
+	// don't share mutable fields. Immutable deps (conjur, k8s, log) are shared safely.
+	local := &K8sProvider{
+		k8s:             p.k8s,
+		conjur:          p.conjur,
+		log:             p.log,
+		podNamespace:    p.podNamespace,
+		traceContext:    p.traceContext,
+		sanitizeEnabled: p.sanitizeEnabled,
+		// prevSecretsChecksums is NOT copied — we use p.prevSecretsChecksums directly below
+		// (it's already thread-safe with its own mutex)
+		prevVariablesValues: p.prevVariablesValues,
+		requiredK8sSecrets:  []string{},
+		secretsGroups:       make(map[string]map[string][]*pushtofile.SecretGroup),
+		secretsState:        k8sSecretsState{updateDestinations: map[string][]updateDestination{}},
+		originalK8sSecrets:  map[string]*v1.Secret{},
+	}
 
 	tr := trace.NewOtelTracer(otel.Tracer("secrets-provider"))
 
-	//prepare clean  data
-	p.requiredK8sSecrets = []string{}
-	p.secretsGroups = make(map[string]map[string][]*pushtofile.SecretGroup)
-	p.secretsState = k8sSecretsState{
-		updateDestinations: map[string][]updateDestination{},
-	}
-
-	err := p.retrieveRequiredK8sSecret(secret)
+	err := local.retrieveRequiredK8sSecret(secret)
 
 	if err != nil {
 		return secret, err, nil, ""
 	}
 
-	spanCtx, span := tr.Start(p.traceContext, "Fetch Conjur Secrets")
+	spanCtx, span := tr.Start(local.traceContext, "Fetch Conjur Secrets")
 	defer span.End()
-	//retrievedConjurSecrets, _ := p.retrxieveConjurSecrets(tr)
 
 	var variableIDs []string
 
-	updateDests := p.secretsState.updateDestinations
+	updateDests := local.secretsState.updateDestinations
 	if updateDests != nil {
 		for variableID := range updateDests {
 			if contains(variableIDs, variableID) {
@@ -295,8 +300,8 @@ func (p *K8sProvider) Mutate(secret v1.Secret) (v1.Secret, error, map[string][]b
 	fullK8sSecretName := fmt.Sprintf("%s/%s", secret.Namespace, secret.Name)
 
 	// ziskama variablesID pro tenhle sekret
-	if p.secretsGroups[authn] != nil {
-		secretGroups := p.secretsGroups[authn]
+	if local.secretsGroups[authn] != nil {
+		secretGroups := local.secretsGroups[authn]
 		if secretGroups != nil {
 			for _, secretGroup := range secretGroups[fullK8sSecretName] {
 				for _, secretSpec := range secretGroup.SecretSpecs {
@@ -312,17 +317,16 @@ func (p *K8sProvider) Mutate(secret v1.Secret) (v1.Secret, error, map[string][]b
 	if len(variableIDs) == 0 {
 		return secret, nil, nil, ""
 	}
-	//p.log.debug("List of Conjur Secrets to fetch %s", updateDests)
 
 	// vyzvedneme variables z conjuru
-	retrievedConjurSecrets, err, variableErrors := p.conjur.retrieveSecrets(authn, variableIDs, spanCtx)
+	retrievedConjurSecrets, err, variableErrors := local.conjur.retrieveSecrets(authn, variableIDs, spanCtx)
 	if err != nil {
 		log.Error("Secret '%s/%s' not mutated. Error: %s", secret.Namespace, secret.Name, err.Error())
 		return secret, nil, nil, err.Error()
 	}
 
-	newSecretsDataMap := p.createSecretData(retrievedConjurSecrets)
-	newSecretsDataMap = p.createGroupTemplateSecretData(authn, retrievedConjurSecrets, newSecretsDataMap)
+	newSecretsDataMap := local.createSecretData(retrievedConjurSecrets)
+	newSecretsDataMap = local.createGroupTemplateSecretData(authn, retrievedConjurSecrets, newSecretsDataMap)
 
 	if secret.Data == nil {
 		secret.Data = map[string][]byte{}
@@ -349,16 +353,36 @@ func (p *K8sProvider) Mutate(secret v1.Secret) (v1.Secret, error, map[string][]b
 	checksum, _ := utils.FileChecksum(b)
 	p.prevSecretsChecksums.set(fullK8sSecretName, checksum)
 
-	p.log.info("Secret %s mutated", fullK8sSecretName)
+	local.log.info("Secret %s mutated", fullK8sSecretName)
 
 	errMsg := ""
 	//join all variables error into on string
-	p.log.debug("Mutated secret %s has this variables errors: %s", fullK8sSecretName, variableErrors)
+	local.log.debug("Mutated secret %s has this variables errors: %s", fullK8sSecretName, variableErrors)
 	if len(variableErrors) > 0 {
 		if errMsgJson, e := json.Marshal(variableErrors); e == nil {
 			errMsg = string(errMsgJson)
 		}
 	}
+
+	// Merge local scratch state back into p (protected from concurrent Mutate calls)
+	mutateMergeLock.Lock()
+	p.requiredK8sSecrets = append(p.requiredK8sSecrets, local.requiredK8sSecrets...)
+	for authn, groups := range local.secretsGroups {
+		if p.secretsGroups[authn] == nil {
+			p.secretsGroups[authn] = groups
+		} else {
+			for k, v := range groups {
+				p.secretsGroups[authn][k] = v
+			}
+		}
+	}
+	for varID, dests := range local.secretsState.updateDestinations {
+		p.secretsState.updateDestinations[varID] = dests
+	}
+	for name, secret := range local.originalK8sSecrets {
+		p.originalK8sSecrets[name] = secret
+	}
+	mutateMergeLock.Unlock()
 
 	return secret, nil, newSecretsDataMap[fullK8sSecretName], errMsg
 
@@ -668,9 +692,6 @@ func contains(elems []string, v string) bool {
 }
 
 func (p *K8sProvider) retrieveConjurSecrets(tracer trace.Tracer) (map[string]map[string][]byte, error, map[string]map[string]string) {
-
-	retrieveSecretLock.Lock()
-	defer retrieveSecretLock.Unlock()
 
 	spanCtx, span := tracer.Start(p.traceContext, "Fetch Conjur Secrets")
 	defer span.End()

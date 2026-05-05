@@ -95,9 +95,6 @@ func (retriever secretRetriever) GetAuthenticatorForAuthn(auth string) (authenti
 // return map of provided errors where key is variableID
 func (retriever secretRetriever) Retrieve(auth string, variableIDs []string, traceContext context.Context) (map[string][]byte, error, map[string]string) {
 
-	lock.Lock()
-	defer lock.Unlock()
-
 	//var err error
 	authn, err := retriever.GetAuthenticatorForAuthn(auth)
 	if err != nil {
