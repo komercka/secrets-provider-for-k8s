@@ -721,8 +721,10 @@ func (p *K8sProvider) retrieveConjurSecrets(tracer trace.Tracer) (map[string]map
 				}
 			}
 			result[authn] = retrievedConjurSecrets
-			//update cache
-			p.prevVariablesValues[authn] = retrievedConjurSecrets
+			if retrievedConjurSecrets != nil {
+				//update cache
+				p.prevVariablesValues[authn] = retrievedConjurSecrets
+			}
 		}
 	}
 	return result, nil, variableErrors
@@ -815,6 +817,10 @@ func (p *K8sProvider) updateRequiredK8sSecrets(
 func (p *K8sProvider) createSecretData(conjurSecrets map[string][]byte) map[string]map[string][]byte {
 	newSecretsDataMap := map[string]map[string][]byte{}
 	for variableID, secretValue := range conjurSecrets {
+		//if conjurSecret nil or empty, conjur call might not be successful and therefore dont set it into secret as it might delete current content
+		if secretValue == nil || string(secretValue) == "" {
+			continue
+		}
 		dests := p.secretsState.updateDestinations[variableID]
 
 		if dests != nil {
