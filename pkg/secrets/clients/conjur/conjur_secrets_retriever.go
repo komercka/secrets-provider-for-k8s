@@ -1,11 +1,13 @@
 package conjur
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cyberark/conjur-authn-k8s-client/pkg/authenticator/common"
 	"github.com/cyberark/conjur-authn-k8s-client/pkg/authenticator/k8s"
@@ -44,6 +46,18 @@ type AddAuthnFunc func(auth string) (authenticator.Authenticator, error)
 
 var lock sync.Mutex
 
+// Conjur access tokens are valid for 8 minutes, reuse them for half of that
+var tokenTTL = 4 * time.Minute
+
+// authnLock serializes access to the authenticator of one authn and remembers when its
+// access token was obtained, so the token is reused instead of authenticating every time
+type authnLock struct {
+	sync.Mutex
+	tokenObtained time.Time
+}
+
+var authnLocks = map[string]*authnLock{}
+
 // NewSecretRetriever creates a new SecretRetriever and Authenticator
 // given an authenticator config.
 func NewSecretRetriever(authnConfig config.Configuration) (RetrieveSecretsFunc, error) {
@@ -55,6 +69,8 @@ func NewSecretRetriever(authnConfig config.Configuration) (RetrieveSecretsFunc, 
 }
 
 func (retriever secretRetriever) GetAuthenticatorForAuthn(auth string) (authenticator.Authenticator, error) {
+	lock.Lock()
+	defer lock.Unlock()
 	auth = strings.ToUpper(auth)
 	log.Debug("Getting authenticator for: %s", auth)
 	accessToken, err := memory.NewAccessToken()
@@ -89,17 +105,31 @@ func (retriever secretRetriever) GetAuthenticatorForAuthn(auth string) (authenti
 	return retriever.authnMap[auth], nil
 }
 
-// Retrieve implements a RetrieveSecretsFunc for a given SecretRetriever.
-// Authenticates the client, and retrieves a given batch of variables from Conjur.
-// return map of retrieved values where key is variableID
-// return map of provided errors where key is variableID
-func (retriever secretRetriever) Retrieve(auth string, variableIDs []string, traceContext context.Context) (map[string][]byte, error, map[string]string) {
+// getAccessToken returns a copy of the access token of the authn's authenticator,
+// authenticates first when there is none or it is older than tokenTTL
+func (retriever secretRetriever) getAccessToken(auth string, traceContext context.Context) ([]byte, error) {
+	lock.Lock()
+	l := authnLocks[strings.ToUpper(auth)]
+	if l == nil {
+		l = &authnLock{}
+		authnLocks[strings.ToUpper(auth)] = l
+	}
+	lock.Unlock()
+
+	l.Lock()
+	defer l.Unlock()
 
 	//var err error
 	authn, err := retriever.GetAuthenticatorForAuthn(auth)
 	if err != nil {
 		log.Error("Cannot get authenticator for %s.", auth)
-		return nil, err, nil
+		return nil, err
+	}
+
+	if time.Since(l.tokenObtained) < tokenTTL {
+		if accessTokenData, err := authn.GetAccessToken().Read(); err == nil {
+			return bytes.Clone(accessTokenData), nil
+		}
 	}
 
 	err = authn.AuthenticateWithContext(traceContext)
@@ -110,15 +140,27 @@ func (retriever secretRetriever) Retrieve(auth string, variableIDs []string, tra
 	//after successfully auth close the connection as it is not needed anymore
 	authn.GetHttpClient().CloseIdleConnections()
 	if err != nil {
-		return nil, log.RecordedError("%s for %s authenticator", messages.CSPFK010E, auth), nil
+		return nil, log.RecordedError("%s for %s authenticator", messages.CSPFK010E, auth)
 	}
 
 	accessTokenData, err := authn.GetAccessToken().Read()
 	if err != nil {
-		return nil, log.RecordedError("%s for %s authenticator", messages.CSPFK002E, auth), nil
+		return nil, log.RecordedError("%s for %s authenticator", messages.CSPFK002E, auth)
 	}
-	// Always delete the access token. The deletion is idempotent and never fails
-	defer authn.GetAccessToken().Delete()
+	l.tokenObtained = time.Now()
+	return bytes.Clone(accessTokenData), nil
+}
+
+// Retrieve implements a RetrieveSecretsFunc for a given SecretRetriever.
+// Authenticates the client, and retrieves a given batch of variables from Conjur.
+// return map of retrieved values where key is variableID
+// return map of provided errors where key is variableID
+func (retriever secretRetriever) Retrieve(auth string, variableIDs []string, traceContext context.Context) (map[string][]byte, error, map[string]string) {
+
+	accessTokenData, err := retriever.getAccessToken(auth, traceContext)
+	if err != nil {
+		return nil, err, nil
+	}
 	defer func() {
 		// Clear the access token from memory after we use it to authenticate
 		for b := range accessTokenData {
