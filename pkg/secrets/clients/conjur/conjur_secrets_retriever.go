@@ -3,7 +3,9 @@ package conjur
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 	"sync"
@@ -13,6 +15,8 @@ import (
 	"github.com/cyberark/conjur-authn-k8s-client/pkg/authenticator/k8s"
 
 	"github.com/cyberark/conjur-api-go/conjurapi"
+	"github.com/cyberark/conjur-api-go/conjurapi/response"
+	"github.com/cyberark/conjur-authn-k8s-client/pkg/access_token"
 	"github.com/cyberark/conjur-authn-k8s-client/pkg/access_token/memory"
 	"github.com/cyberark/conjur-authn-k8s-client/pkg/authenticator"
 	"github.com/cyberark/conjur-authn-k8s-client/pkg/authenticator/config"
@@ -54,6 +58,7 @@ var tokenTTL = 4 * time.Minute
 type authnLock struct {
 	sync.Mutex
 	tokenObtained time.Time
+	token         access_token.AccessToken
 }
 
 var authnLocks = map[string]*authnLock{}
@@ -148,7 +153,29 @@ func (retriever secretRetriever) getAccessToken(auth string, traceContext contex
 		return nil, log.RecordedError("%s for %s authenticator", messages.CSPFK002E, auth)
 	}
 	l.tokenObtained = time.Now()
+	l.token = authn.GetAccessToken()
 	return bytes.Clone(accessTokenData), nil
+}
+
+// deleteAccessToken deletes the access token of the authn's authenticator,
+// so the next retrieve has to authenticate for a new one
+func deleteAccessToken(auth string) {
+	lock.Lock()
+	l := authnLocks[strings.ToUpper(auth)]
+	lock.Unlock()
+	if l == nil {
+		return
+	}
+	l.Lock()
+	defer l.Unlock()
+	if l.token != nil {
+		l.token.Delete()
+	}
+}
+
+func isUnauthorized(err error) bool {
+	var conjurErr *response.ConjurError
+	return errors.As(err, &conjurErr) && conjurErr.Code == http.StatusUnauthorized
 }
 
 // Retrieve implements a RetrieveSecretsFunc for a given SecretRetriever.
@@ -266,6 +293,9 @@ func retrieveConjurSecrets(auth string, accessToken []byte, variableIDs []string
 				variableErrors[variableIDs[0]] = err.Error()
 			}
 		} else {
+			if isUnauthorized(err) {
+				deleteAccessToken(auth)
+			}
 			variableErrors["general"] = err.Error()
 		}
 		return nil, nil, variableErrors

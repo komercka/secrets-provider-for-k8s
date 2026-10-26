@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cyberark/conjur-api-go/conjurapi"
+	"github.com/cyberark/conjur-api-go/conjurapi/response"
 	"github.com/cyberark/conjur-authn-k8s-client/pkg/access_token"
 	"github.com/cyberark/conjur-authn-k8s-client/pkg/access_token/memory"
 	"github.com/cyberark/conjur-authn-k8s-client/pkg/authenticator"
@@ -85,4 +87,35 @@ func TestRetrieveReauthenticatesAfterTokenTTL(t *testing.T) {
 		assert.NoError(t, err)
 	}
 	assert.Equal(t, int32(2), authn.authCount.Load())
+}
+
+// unauthorizedConjurClient rejects every request with 401
+type unauthorizedConjurClient struct{}
+
+func (c *unauthorizedConjurClient) RetrieveBatchSecretsSafe(variableIDs []string) (map[string][]byte, error) {
+	return nil, &response.ConjurError{Code: http.StatusUnauthorized, Message: "Unauthorized"}
+}
+
+func (c *unauthorizedConjurClient) Resources(filter *conjurapi.ResourceFilter) ([]map[string]interface{}, error) {
+	return nil, nil
+}
+
+func (c *unauthorizedConjurClient) GetHttpClient() *http.Client {
+	return &http.Client{}
+}
+
+func TestRetrieveReauthenticatesAfterUnauthorized(t *testing.T) {
+	retriever, authn := newFakeRetriever("UNAUTHORIZED")
+
+	_, err, _ := retriever.Retrieve("unauthorized", []string{}, context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, int32(1), authn.authCount.Load())
+
+	_, err, variableErrors := retrieveConjurSecrets("unauthorized", []byte("token-1"), []string{"var1"}, &unauthorizedConjurClient{})
+	assert.NoError(t, err)
+	assert.Contains(t, variableErrors["general"], "Unauthorized")
+
+	_, err, _ = retriever.Retrieve("unauthorized", []string{}, context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, int32(2), authn.authCount.Load(), "rejected token should be replaced by a new one")
 }
